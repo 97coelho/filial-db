@@ -1,0 +1,1 @@
+- [Estado do Projeto](.claude/projects/-home-matheus-projetos-filial-db/memory/estado-projeto.md) — hook
