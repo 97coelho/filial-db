@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block titulo %}Novo Cliente{% endblock %}
+
+{% block conteudo %}
+<h1 class="h4 mb-4">Vincular Cliente a um Processo</h1>
+
+{% if not processos %}
+<div class="alert alert-warning">
+    Nenhum processo cadastrado ainda. <a href="{{ url_for('agenda_novo') }}">Crie um processo primeiro</a>.
+</div>
+{% else %}
+<form method="POST" class="card p-4">
+    <div class="row g-3">
+        <div class="col-md-6">
+            <label class="form-label">Processo *</label>
+            <select name="processo" class="form-select" required>
+                <option value="" disabled selected>Selecione um processo...</option>
+                {% for p in processos %}
+                <option value="{{ p.processo }}">{{ p.processo }} — {{ p.origem or "?" }} → {{ p.destino or "?" }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">Nome do Cliente *</label>
+            <input type="text" name="nome_cliente" class="form-control" required>
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">E-mail</label>
+            <input type="email" name="email" class="form-control">
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">E-mail (Agendor)</label>
+            <input type="email" name="email_agendor" class="form-control">
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">Agente</label>
+            <input type="text" name="agente" class="form-control">
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">Empresa</label>
+            <input type="text" name="empresa" class="form-control">
+        </div>
+    </div>
+
+    <button type="submit" class="btn btn-primary mt-3">Salvar Cliente</button>
+    <a href="{{ url_for('index') }}" class="btn btn-link mt-3">Cancelar</a>
+</form>
+{% endif %}
+{% endblock %}

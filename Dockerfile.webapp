@@ -1,0 +1,12 @@
+# Imagem base leve, já com Python 3.12
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Única dependência nova em relação ao container do setup_db.py: Flask
+RUN pip install --no-cache-dir flask
+
+# app.py e a pasta templates/ NÃO são copiados para dentro da imagem.
+# Eles são montados como volume em tempo de execução (veja docker-compose.yml),
+# assim como schema.sql e setup_db.py já eram — permite editar no Positron
+# sem precisar reconstruir a imagem a cada mudança.

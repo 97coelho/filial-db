@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block titulo %}Nova Avaliação{% endblock %}
+
+{% block conteudo %}
+<h1 class="h4 mb-4">Lançar Avaliação</h1>
+
+{% if not processos %}
+<div class="alert alert-warning">
+    Nenhum processo cadastrado ainda. <a href="{{ url_for('agenda_novo') }}">Crie um processo primeiro</a>.
+</div>
+{% else %}
+<form method="POST" class="card p-4">
+    <div class="row g-3">
+        <div class="col-md-6">
+            <label class="form-label">Processo *</label>
+            <select name="processo" class="form-select" required>
+                <option value="" disabled selected>Selecione um processo...</option>
+                {% for p in processos %}
+                <option value="{{ p.processo }}">{{ p.processo }} — {{ p.origem or "?" }} → {{ p.destino or "?" }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">Data da Avaliação</label>
+            <input type="date" name="data" class="form-control">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Ano</label>
+            <input type="number" name="ano" class="form-control" placeholder="2026">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Mês</label>
+            <input type="number" name="mes" min="1" max="12" class="form-control" placeholder="1-12">
+        </div>
+    </div>
+
+    <fieldset class="mt-3">
+        <legend>Notas (0 a 10)</legend>
+        <div class="row g-3">
+            <div class="col-md-3">
+                <label class="form-label">Pontualidade / Coordenação</label>
+                <input type="number" step="0.1" min="0" max="10" name="nota_pontualidade_coord" class="form-control">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Limpeza / Embalagem</label>
+                <input type="number" step="0.1" min="0" max="10" name="nota_limpeza_embalagem" class="form-control">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Cortesia no Carregamento</label>
+                <input type="number" step="0.1" min="0" max="10" name="nota_cortesia_carregamento" class="form-control">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Técnica / Cortesia</label>
+                <input type="number" step="0.1" min="0" max="10" name="nota_tecnica_cortesia" class="form-control">
+            </div>
+        </div>
+    </fieldset>
+
+    <div class="mb-3">
+        <label class="form-label">Comentário</label>
+        <textarea name="comentario" class="form-control" rows="3"></textarea>
+    </div>
+
+    <button type="submit" class="btn btn-primary mt-2">Salvar Avaliação</button>
+    <a href="{{ url_for('index') }}" class="btn btn-link mt-2">Cancelar</a>
+</form>
+{% endif %}
+{% endblock %}
