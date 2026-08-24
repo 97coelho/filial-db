@@ -1,9 +1,14 @@
 .git
 .venv
+venv
 __pycache__
 .pytest_cache
 .coverage
 .env
 backups
 *.db
+*.sqlite
 *.sqlite3
+.claude
+data_old
+template_migracao_dados_preenchido.ods

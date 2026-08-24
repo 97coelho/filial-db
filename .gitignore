@@ -1,27 +1,17 @@
-# Ambientes virtuais e dependências Python
+.venv/
 venv/
 __pycache__/
 *.py[cod]
-*$py.class
-
-# Bancos de dados locais (evita comitar dados reais/sensíveis)
+*.egg-info/
+.pytest_cache/
+.coverage
+.env
 *.db
 *.sqlite
 *.sqlite3
+backups/
 
-# Arquivos de dados originais (planilhas CSV contendo dados reais de clientes)
-data_old/
-
-# Planilhas preenchidas com dados sensíveis durante a migração
-template_migracao_dados_preenchido.ods
-
-# Arquivos de ambiente e chaves (se vier a usar no Flask)
-.env
-.flaskenv
-
-# Configurações do Claude (memória local, cache)
+# Dados e configurações locais legadas
 .claude/
-
-# Arquivos de sistema operacional
-.DS_Store
-Thumbs.db
+data_old/
+template_migracao_dados_preenchido.ods
