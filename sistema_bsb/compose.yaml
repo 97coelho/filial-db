@@ -1,0 +1,30 @@
+services:
+  app:
+    build: .
+    ports: ["127.0.0.1:5000:5000"]
+    environment:
+      DATABASE_URL: sqlite:////var/lib/filial-bsb/filial_bsb.db
+      SECRET_KEY: ${SECRET_KEY:-desenvolvimento-local-troque-em-producao}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+      API_TOKEN: ${API_TOKEN:-}
+    volumes: ["filial_data:/var/lib/filial-bsb"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+  admin:
+    build: .
+    profiles: ["admin"]
+    environment:
+      DATABASE_URL: sqlite:////var/lib/filial-bsb/filial_bsb.db
+      SECRET_KEY: ${SECRET_KEY:-desenvolvimento-local-troque-em-producao}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+    volumes: ["filial_data:/var/lib/filial-bsb", "./backups:/backups"]
+    entrypoint: ["flask"]
+volumes:
+  filial_data:
