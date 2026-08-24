@@ -195,10 +195,10 @@ def analisar(linhas: list[Linha]) -> dict:
             for campo in NOTAS:
                 valor = linha.valores.get(campo, "")
                 nota = _decimal(valor)
-                if valor and (nota is None or not Decimal("1") <= nota <= Decimal("5")):
+                if valor and (nota is None or not Decimal("0") <= nota <= Decimal("10")):
                     adicionar(
                         linha, "nota_invalida", campo, valor,
-                        "A nota deve ser numérica e estar entre 1 e 5.", "erro",
+                        "A nota deve ser numérica e estar entre 0 e 10.", "erro",
                     )
         if linha.arquivo == "servicos.CSV":
             coordenadora = linha.valores.get("Coordenadora", "")

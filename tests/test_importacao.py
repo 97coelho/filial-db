@@ -1,10 +1,12 @@
 import csv
+from datetime import date
 
 from openpyxl import load_workbook
 
 from app.extensions import db
-from app.models import ImportacaoLote, ImportacaoRegistro, Pessoa, Processo
-from app.services.importacao import carregar, gerar_relatorio
+from app.models import AvaliacaoTemplate, ImportacaoLote, ImportacaoRegistro, Pessoa, Processo
+from app.seed import seed_database
+from app.services.importacao import analisar, carregar, gerar_relatorio, ler_fontes
 
 
 def escrever_csv(caminho, cabecalhos, linhas):
@@ -14,7 +16,7 @@ def escrever_csv(caminho, cabecalhos, linhas):
         writer.writerows(linhas)
 
 
-def fontes(tmp_path, cliente="Maria"):
+def fontes(tmp_path, cliente="Maria", nota="11"):
     escrever_csv(
         tmp_path / "agenda.CSV",
         ["Processo", "Nome do cliente", "Tipo", "Status", "Recebido em", "Data A inicial"],
@@ -34,7 +36,7 @@ def fontes(tmp_path, cliente="Maria"):
     escrever_csv(
         tmp_path / "avaliacao_bruta.CSV",
         ["Processo Nº", "Cliente", "Data", "Pontualidade/\nCoordenação"],
-        [{"Processo Nº": "IMP-2", "Cliente": "José", "Data": "22/08/2026", "Pontualidade/\nCoordenação": "6"}],
+        [{"Processo Nº": "IMP-2", "Cliente": "José", "Data": "22/08/2026", "Pontualidade/\nCoordenação": nota}],
     )
 
 
@@ -88,3 +90,25 @@ def test_cli_rejeita_fonte_incompleta(app, tmp_path):
     resultado = runner.invoke(args=["importar", "carregar", str(tmp_path), "--dry-run"])
     assert resultado.exit_code != 0
     assert "Arquivo obrigatório ausente" in resultado.output
+
+
+def test_notas_de_zero_a_dez_sao_validas(tmp_path):
+    for nota in ("0", "10"):
+        fontes(tmp_path, nota=nota)
+        _, linhas = ler_fontes(tmp_path)
+        diagnostico = analisar(linhas)
+        assert not any(
+            item["codigo"] == "nota_invalida" for item in diagnostico["problemas"]
+        )
+
+
+def test_seed_atualiza_escala_do_template_existente(app):
+    with app.app_context():
+        template = AvaliacaoTemplate(
+            nome="Avaliação padrão", versao=1, vigente_desde=date(2024, 1, 1),
+            perguntas=[{"codigo": "nota_1", "escala": [1, 5]}],
+        )
+        db.session.add(template)
+        db.session.commit()
+        seed_database()
+        assert all(pergunta["escala"] == [0, 10] for pergunta in template.perguntas)

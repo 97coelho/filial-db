@@ -25,9 +25,16 @@ def seed_database():
     if not RegraComissao.query.first():
         db.session.add(RegraComissao(versao=1, vigente_desde=date(2024, 1, 1),
             parametros={"perguntas": ["nota_1", "nota_2", "nota_3", "nota_4"], "fator": 5}))
-    if not AvaliacaoTemplate.query.first():
+    perguntas = [
+        {"codigo": f"nota_{i}", "titulo": f"Nota {i}", "escala": [0, 10], "ordem": i}
+        for i in range(1, 5)
+    ]
+    template = AvaliacaoTemplate.query.filter_by(nome="Avaliação padrão", versao=1).first()
+    if not template:
         db.session.add(AvaliacaoTemplate(nome="Avaliação padrão", versao=1, vigente_desde=date(2024, 1, 1),
-            perguntas=[{"codigo": f"nota_{i}", "titulo": f"Nota {i}", "escala": [1, 5], "ordem": i} for i in range(1, 5)]))
+            perguntas=perguntas))
+    elif template.perguntas != perguntas:
+        template.perguntas = perguntas
     email = os.environ.get("ADMIN_EMAIL", "admin@local").lower()
     if not Usuario.query.filter_by(email=email).first():
         user = Usuario(email=email, nome="Administrador", papel=Papel.query.filter_by(nome="administrador").first())
