@@ -93,6 +93,43 @@ class Colaborador(db.Model, TimestampMixin):
     ativo: Mapped[bool] = mapped_column(default=True)
 
 
+class Solicitacao(db.Model, TimestampMixin):
+    __tablename__ = "solicitacoes"
+    id: Mapped[str] = mapped_column(db.String(36), primary_key=True, default=uid)
+    processo_id: Mapped[str | None] = mapped_column(
+        db.ForeignKey("processos.id"), unique=True, index=True
+    )
+    agente_nome: Mapped[str] = mapped_column(db.String(180))
+    cliente_nome: Mapped[str] = mapped_column(db.String(180), index=True)
+    endereco: Mapped[str] = mapped_column(db.Text)
+    volume_m3: Mapped[Decimal] = mapped_column(db.Numeric(14, 3))
+    data_inicial_inicio: Mapped[date]
+    data_inicial_fim: Mapped[date]
+    data_ofertada_inicio: Mapped[date | None]
+    data_ofertada_fim: Mapped[date | None]
+    data_final_inicio: Mapped[date | None]
+    data_final_fim: Mapped[date | None]
+    estado: Mapped[str] = mapped_column(db.String(30), default="recebida", index=True)
+    confirmado_por_email_em: Mapped[datetime | None]
+    observacoes: Mapped[str | None] = mapped_column(db.Text)
+    processo: Mapped[Processo | None] = relationship(foreign_keys=[processo_id])
+    __table_args__ = (
+        CheckConstraint("volume_m3 > 0"),
+        CheckConstraint("data_inicial_fim >= data_inicial_inicio"),
+        CheckConstraint(
+            "(data_ofertada_inicio is null and data_ofertada_fim is null) or "
+            "(data_ofertada_inicio is not null and data_ofertada_fim >= data_ofertada_inicio)"
+        ),
+        CheckConstraint(
+            "(data_final_inicio is null and data_final_fim is null) or "
+            "(data_final_inicio is not null and data_final_fim >= data_final_inicio)"
+        ),
+        CheckConstraint(
+            "estado in ('recebida','negociacao','confirmada','convertida','cancelada')"
+        ),
+    )
+
+
 class Processo(db.Model, TimestampMixin):
     __tablename__ = "processos"
     id: Mapped[str] = mapped_column(db.String(36), primary_key=True, default=uid)

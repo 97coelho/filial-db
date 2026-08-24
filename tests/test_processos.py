@@ -55,3 +55,44 @@ def test_api_fluxo_minimo(client, auth):
 def test_api_requer_autenticacao(client):
     response = client.get("/api/v1/processos")
     assert response.status_code == 401 and response.json["error"]["code"] == "unauthorized"
+
+
+def test_solicitacao_confirmada_aguarda_numero_externo(client, auth):
+    criada = client.post("/api/v1/solicitacoes", headers=auth, json={
+        "agente_nome": "Agente X", "cliente_nome": "Maria", "endereco": "Brasília",
+        "volume_m3": 12.5, "data_inicial": ["2026-09-01", "2026-09-03"],
+    })
+    assert criada.status_code == 201
+    solicitacao_id = criada.json["id"]
+    bloqueada = client.patch(
+        f"/api/v1/solicitacoes/{solicitacao_id}", headers=auth,
+        json={"estado": "confirmada"},
+    )
+    assert bloqueada.status_code == 422
+    confirmada = client.patch(
+        f"/api/v1/solicitacoes/{solicitacao_id}", headers=auth,
+        json={
+            "data_ofertada": ["2026-09-05", "2026-09-07"],
+            "data_final": ["2026-09-06", "2026-09-08"],
+            "confirmado_por_email_em": "2026-08-24T10:00:00-03:00",
+            "estado": "confirmada",
+        },
+    )
+    assert confirmada.status_code == 200
+    assert confirmada.json["processo_id"] is None
+
+    pessoa = client.post("/api/v1/pessoas", json={"nome": "Maria"}, headers=auth)
+    processo = client.post("/api/v1/processos", headers=auth, json={
+        "codigo": "EXP-16001", "cliente_id": pessoa.json["id"],
+        "tipo": "exportacao", "solicitacao_id": solicitacao_id,
+    })
+    assert processo.status_code == 201
+    assert processo.json["status_agenda"] == "agendado"
+    assert processo.json["janelas"] == [{
+        "id": processo.json["janelas"][0]["id"], "tipo": "confirmada",
+        "data_inicio": "2026-09-06", "data_fim": "2026-09-08",
+    }]
+    assert processo.json["medidas"][0]["valor"] == 12.5
+    vinculada = client.get(f"/api/v1/solicitacoes/{solicitacao_id}", headers=auth)
+    assert vinculada.json["estado"] == "convertida"
+    assert vinculada.json["processo_id"] == processo.json["id"]

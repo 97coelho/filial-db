@@ -25,7 +25,8 @@ def carregar(diretorio: Path, dry_run: bool):
     click.echo(
         f"Diagnóstico: {resultado['erros']} erro(s), "
         f"{resultado['avisos']} aviso(s), "
-        f"{resultado['processos_orfaos']} processo(s) órfão(s)"
+        f"{resultado['processos_orfaos']} processo(s) sem agenda, "
+        f"{resultado['solicitacoes']} solicitação(ões)"
     )
     if dry_run:
         click.echo("Dry-run concluído; nenhum registro foi gravado.")
@@ -50,5 +51,6 @@ def relatorio(lote: str, saida: Path):
     click.echo(f"Relatório: {saida.resolve()}")
     click.echo(
         f"Linhas: {totais['linhas']} | Erros: {totais['erros']} | "
-        f"Avisos: {totais['avisos']} | Órfãos: {totais['processos_orfaos']}"
+        f"Avisos: {totais['avisos']} | Sem agenda: {totais['processos_orfaos']} | "
+        f"Solicitações: {totais['solicitacoes']}"
     )

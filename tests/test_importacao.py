@@ -6,7 +6,10 @@ from openpyxl import load_workbook
 from app.extensions import db
 from app.models import AvaliacaoTemplate, ImportacaoLote, ImportacaoRegistro, Pessoa, Processo
 from app.seed import seed_database
-from app.services.importacao import analisar, carregar, gerar_relatorio, ler_fontes
+from app.services.importacao import (
+    analisar, carregar, gerar_relatorio, ler_fontes, normalizar_intervalo,
+    primeira_coordenadora,
+)
 
 
 def escrever_csv(caminho, cabecalhos, linhas):
@@ -46,7 +49,7 @@ def test_dry_run_nao_grava_e_identifica_problemas(app, tmp_path):
         resultado = carregar(tmp_path, dry_run=True)
         assert resultado["linhas"] == 4
         assert resultado["processos_orfaos"] == 1
-        assert resultado["erros"] >= 3
+        assert resultado["erros"] >= 2
         assert ImportacaoLote.query.count() == 0
         assert ImportacaoRegistro.query.count() == 0
 
@@ -78,11 +81,12 @@ def test_relatorio_xlsx_tem_diagnostico_e_dados_brutos(app, tmp_path):
         totais = gerar_relatorio(resultado["lote"], destino)
     wb = load_workbook(destino)
     assert set((
-        "Resumo", "Pendencias", "Processos_orfaos", "Dominios",
+        "Resumo", "Pendencias", "Processos_sem_agenda", "Dominios",
+        "Solicitacoes", "Registros_financeiros", "Datas_normalizadas",
         "Bruto_agenda", "Bruto_servicos", "Bruto_avaliacoes",
     )).issubset(wb.sheetnames)
     assert totais["linhas"] == 4
-    assert wb["Processos_orfaos"].max_row == 2
+    assert wb["Processos_sem_agenda"].max_row == 2
 
 
 def test_cli_rejeita_fonte_incompleta(app, tmp_path):
@@ -112,3 +116,27 @@ def test_seed_atualiza_escala_do_template_existente(app):
         db.session.commit()
         seed_database()
         assert all(pergunta["escala"] == [0, 10] for pergunta in template.perguntas)
+
+
+def test_normaliza_datas_e_intervalos_com_ano_de_referencia():
+    assert normalizar_intervalo("3/20/2026", formato_americano=True) == (
+        date(2026, 3, 20), date(2026, 3, 20),
+    )
+    assert normalizar_intervalo("30/03 a 02/04", 2026) == (
+        date(2026, 3, 30), date(2026, 4, 2),
+    )
+    assert normalizar_intervalo("19 e 20/01", 2026) == (
+        date(2026, 1, 19), date(2026, 1, 20),
+    )
+    assert normalizar_intervalo("02 a 06/03", 2026) == (
+        date(2026, 3, 2), date(2026, 3, 6),
+    )
+    assert normalizar_intervalo("16/03/2026", formato_americano=True) == (
+        date(2026, 3, 16), date(2026, 3, 16),
+    )
+    assert normalizar_intervalo("ASAP", 2026) is None
+
+
+def test_coordenadora_composta_usa_primeiro_nome():
+    assert primeira_coordenadora("Leticia, Gabrielle") == "Leticia"
+    assert primeira_coordenadora("Ana e Bianca") == "Ana"

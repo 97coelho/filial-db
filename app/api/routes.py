@@ -1,4 +1,5 @@
-from datetime import date
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from functools import wraps
 
 from flask import Blueprint, current_app, jsonify, request, session
@@ -7,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from ..extensions import db
 from ..models import (Avaliacao, AvaliacaoTemplate, Catalogo, Colaborador, Documento, Etapa,
                       Execucao, JanelaAgenda, Medida, MovimentoPool, OrdemServico,
-                      Organizacao, Pessoa, Processo, RegraComissao, Usuario)
+                      Organizacao, Pessoa, Processo, RegraComissao, Solicitacao, Usuario)
 from ..services.comissoes import calcular_credito
 from ..services.processos import auditar, buscar_processos, normalizar_codigo, pendencias, pode_concluir
 
@@ -46,6 +47,45 @@ def processo_json(p, detail=False):
     return data
 
 
+def solicitacao_json(item):
+    return {
+        "id": item.id,
+        "processo_id": item.processo_id,
+        "agente_nome": item.agente_nome,
+        "cliente_nome": item.cliente_nome,
+        "endereco": item.endereco,
+        "volume_m3": float(item.volume_m3),
+        "data_inicial": [iso(item.data_inicial_inicio), iso(item.data_inicial_fim)],
+        "data_ofertada": [iso(item.data_ofertada_inicio), iso(item.data_ofertada_fim)],
+        "data_final": [iso(item.data_final_inicio), iso(item.data_final_fim)],
+        "estado": item.estado,
+        "confirmado_por_email_em": iso(item.confirmado_por_email_em),
+        "observacoes": item.observacoes,
+    }
+
+
+def intervalo(data, nome, obrigatorio=False):
+    valor = data.get(nome)
+    if valor is None and not obrigatorio:
+        return None
+    if not isinstance(valor, list) or len(valor) != 2:
+        raise ValueError(f"{nome} deve conter [início, fim]")
+    inicio, fim = (date.fromisoformat(x) for x in valor)
+    if fim < inicio:
+        raise ValueError(f"{nome}: fim deve ser igual ou posterior ao início")
+    return inicio, fim
+
+
+def volume(valor):
+    try:
+        resultado = Decimal(str(valor).replace(",", "."))
+    except InvalidOperation as exc:
+        raise ValueError("volume_m3 deve ser numérico") from exc
+    if resultado <= 0:
+        raise ValueError("volume_m3 deve ser maior que zero")
+    return resultado
+
+
 @api.errorhandler(IntegrityError)
 def integrity_error(_):
     db.session.rollback()
@@ -68,10 +108,99 @@ def processos_create():
     missing = [x for x in ("codigo", "cliente_id", "tipo") if not data.get(x)]
     if missing: return error("Campos obrigatórios ausentes", details={"fields": missing})
     if not db.session.get(Pessoa, data["cliente_id"]): return error("Cliente não encontrado", 404, "not_found")
+    solicitacao = None
+    if data.get("solicitacao_id"):
+        solicitacao = db.session.get(Solicitacao, data["solicitacao_id"])
+        if not solicitacao: return error("Solicitação não encontrada", 404, "not_found")
+        if solicitacao.estado != "confirmada" or solicitacao.processo_id:
+            return error("A solicitação deve estar confirmada e ainda não convertida", 422, "business_rule")
     p = Processo(codigo=normalizar_codigo(data["codigo"]), cliente_id=data["cliente_id"], tipo=data["tipo"],
                  coordenador_id=data.get("coordenador_id"), observacoes=data.get("observacoes"))
-    db.session.add(p); db.session.flush(); auditar("processo", p.id, "criacao", novo=p.codigo, usuario_id=session.get("usuario_id")); db.session.commit()
+    if solicitacao:
+        p.status_agenda = "agendado"
+        p.janelas.append(JanelaAgenda(
+            tipo="confirmada", data_inicio=solicitacao.data_final_inicio,
+            data_fim=solicitacao.data_final_fim,
+            observacoes="Intervalo final confirmado na solicitação",
+        ))
+        p.medidas.append(Medida(
+            tipo="estimado", unidade="m3", valor=solicitacao.volume_m3,
+        ))
+    db.session.add(p); db.session.flush()
+    if solicitacao:
+        solicitacao.processo_id = p.id
+        solicitacao.estado = "convertida"
+    auditar("processo", p.id, "criacao", novo=p.codigo, usuario_id=session.get("usuario_id")); db.session.commit()
     return jsonify(processo_json(p, True)), 201
+
+
+@api.route("/solicitacoes", methods=["GET", "POST"])
+@auth_required
+def solicitacoes():
+    if request.method == "GET":
+        query = Solicitacao.query
+        if request.args.get("estado"):
+            query = query.filter_by(estado=request.args["estado"])
+        return jsonify(items=[solicitacao_json(x) for x in query.order_by(Solicitacao.criado_em.desc()).limit(100)])
+    data = request.get_json(silent=True) or {}
+    obrigatorios = ("agente_nome", "cliente_nome", "endereco", "volume_m3", "data_inicial")
+    ausentes = [campo for campo in obrigatorios if data.get(campo) in (None, "")]
+    if ausentes:
+        return error("Campos obrigatórios ausentes", details={"fields": ausentes})
+    try:
+        inicial = intervalo(data, "data_inicial", obrigatorio=True)
+        item = Solicitacao(
+            agente_nome=data["agente_nome"], cliente_nome=data["cliente_nome"],
+            endereco=data["endereco"], volume_m3=volume(data["volume_m3"]),
+            data_inicial_inicio=inicial[0], data_inicial_fim=inicial[1],
+            observacoes=data.get("observacoes"),
+        )
+    except (TypeError, ValueError) as exc:
+        return error(str(exc))
+    db.session.add(item); db.session.commit()
+    return jsonify(solicitacao_json(item)), 201
+
+
+@api.route("/solicitacoes/<uuid>", methods=["GET", "PATCH"])
+@auth_required
+def solicitacao_item(uuid):
+    item = db.session.get(Solicitacao, uuid)
+    if not item: return error("Solicitação não encontrada", 404, "not_found")
+    if request.method == "GET":
+        return jsonify(solicitacao_json(item))
+    data = request.get_json(silent=True) or {}
+    if item.estado in {"convertida", "cancelada"}:
+        return error("Solicitação encerrada não pode ser alterada", 422, "business_rule")
+    try:
+        for nome, prefixo in (("data_inicial", "data_inicial"), ("data_ofertada", "data_ofertada"), ("data_final", "data_final")):
+            if nome in data:
+                datas = intervalo(data, nome, obrigatorio=nome == "data_inicial")
+                setattr(item, f"{prefixo}_inicio", datas[0] if datas else None)
+                setattr(item, f"{prefixo}_fim", datas[1] if datas else None)
+        if "confirmado_por_email_em" in data:
+            item.confirmado_por_email_em = datetime.fromisoformat(data["confirmado_por_email_em"]) if data["confirmado_por_email_em"] else None
+    except (TypeError, ValueError) as exc:
+        return error(str(exc))
+    if "volume_m3" in data:
+        try: item.volume_m3 = volume(data["volume_m3"])
+        except ValueError as exc: return error(str(exc))
+    for campo in ("agente_nome", "cliente_nome", "endereco", "observacoes"):
+        if campo in data: setattr(item, campo, data[campo])
+    novo_estado = data.get("estado")
+    if novo_estado and novo_estado != item.estado:
+        transicoes = {
+            "recebida": {"negociacao", "confirmada", "cancelada"},
+            "negociacao": {"confirmada", "cancelada"},
+            "confirmada": {"negociacao", "cancelada"},
+        }
+        if novo_estado not in transicoes.get(item.estado, set()):
+            return error("Transição de estado inválida", 422, "business_rule")
+        if novo_estado == "confirmada" and not (
+            item.data_final_inicio and item.data_final_fim and item.confirmado_por_email_em
+        ):
+            return error("Para confirmar, informe o intervalo final e a confirmação por e-mail", 422, "business_rule")
+        item.estado = novo_estado
+    db.session.commit(); return jsonify(solicitacao_json(item))
 
 
 @api.get("/processos/<uuid>")

@@ -37,6 +37,12 @@ No primeiro uso local, se as variáveis não forem alteradas, entre com `admin@l
 
 A API fica em `/api/v1`. Ela aceita uma sessão web autenticada ou `Authorization: Bearer <API_TOKEN>`. Datas são ISO 8601, UUIDs são usados como identificadores e erros seguem `{ "error": { "code", "message", "details" } }`.
 
+### Solicitações e processos
+
+Uma solicitação existe antes do número de processo e registra agente, cliente, endereço, volume e intervalos de datas. O fluxo é `recebida → negociacao → confirmada → convertida`: a data inicial é o pedido do agente, a data ofertada registra a negociação e a data final é o intervalo que será usado pelo serviço. Para confirmar, são obrigatórios o intervalo final e a data do e-mail positivo.
+
+O sistema nunca gera o número. Depois que ele chegar por e-mail, crie o processo em `POST /api/v1/processos` informando também `solicitacao_id`; somente uma solicitação confirmada e ainda não vinculada pode ser convertida.
+
 ## Backup
 
 ```bash

@@ -124,16 +124,51 @@ def ler_fontes(diretorio: Path) -> tuple[str, list[Linha]]:
     return digest.hexdigest(), linhas
 
 
-def _data_valida(valor: str) -> bool:
+def normalizar_intervalo(
+    valor: str, ano_referencia: int | None = None, formato_americano: bool = False
+) -> tuple[date, date] | None:
+    valor = valor.strip()
     if not valor:
-        return True
-    for formato in ("%d/%m/%Y", "%Y-%m-%d"):
-        try:
-            datetime.strptime(valor, formato)
-            return True
-        except ValueError:
-            pass
-    return False
+        return None
+
+    def converter(texto: str, ano_padrao=None, americano=False):
+        texto = texto.strip()
+        if re.fullmatch(r"\d{4}-\d{1,2}-\d{1,2}", texto):
+            return date.fromisoformat(texto)
+        partes = texto.split("/")
+        if len(partes) not in (2, 3):
+            raise ValueError
+        primeiro, segundo = (int(partes[0]), int(partes[1]))
+        ano = int(partes[2]) if len(partes) == 3 else ano_padrao
+        if ano is None:
+            raise ValueError
+        usar_americano = americano and primeiro <= 12
+        dia, mes = (segundo, primeiro) if usar_americano else (primeiro, segundo)
+        return date(ano, mes, dia)
+
+    try:
+        faixa = re.fullmatch(
+            r"(\d{1,2}/\d{1,2}(?:/\d{4})?)\s+a\s+"
+            r"(\d{1,2}/\d{1,2}(?:/\d{4})?)", valor, re.I,
+        )
+        if faixa:
+            inicio = converter(faixa.group(1), ano_referencia)
+            fim = converter(faixa.group(2), inicio.year)
+            if fim < inicio:
+                fim = fim.replace(year=fim.year + 1)
+            return inicio, fim
+        dias = re.fullmatch(r"(\d{1,2})\s+(?:e|a)\s+(\d{1,2})/(\d{1,2})(?:/(\d{4}))?", valor, re.I)
+        if dias:
+            ano = int(dias.group(4)) if dias.group(4) else ano_referencia
+            if ano is None:
+                raise ValueError
+            inicio = date(ano, int(dias.group(3)), int(dias.group(1)))
+            fim = date(ano, int(dias.group(3)), int(dias.group(2)))
+            return inicio, fim
+        unica = converter(valor, ano_referencia, americano=formato_americano)
+        return unica, unica
+    except (ValueError, TypeError):
+        return None
 
 
 def _decimal(valor: str) -> Decimal | None:
@@ -169,17 +204,23 @@ def analisar(linhas: list[Linha]) -> dict:
 
     for linha in linhas:
         processo = _processo(linha)
-        if not processo:
+        financeiro = linha.arquivo == "avaliacao_bruta.CSV" and not processo
+        if not processo and linha.arquivo == "servicos.CSV":
             adicionar(
                 linha, "processo_ausente", _campo_processo(linha.arquivo), "",
                 "A linha não possui identificador de processo.", "erro",
             )
+        recebido = normalizar_intervalo(
+            linha.valores.get("Recebido em", ""), formato_americano=True
+        ) if linha.arquivo == "agenda.CSV" else None
+        ano_referencia = recebido[0].year if recebido else None
         for campo in DATAS[linha.arquivo]:
             valor = linha.valores.get(campo, "")
-            if valor and not _data_valida(valor):
+            americano = linha.arquivo == "agenda.CSV" and campo == "Recebido em"
+            if valor and not normalizar_intervalo(valor, ano_referencia, americano):
                 adicionar(
                     linha, "data_invalida", campo, valor,
-                    "O valor não é uma data ISO ou dd/mm/aaaa.", "erro",
+                    "O valor não pôde ser convertido para intervalo em dd/mm/aaaa.", "erro",
                 )
         for (arquivo, campo), permitidos in DOMINIOS.items():
             if linha.arquivo != arquivo:
@@ -191,7 +232,7 @@ def analisar(linhas: list[Linha]) -> dict:
                     "Valor ainda não possui regra de mapeamento.",
                 )
 
-        if linha.arquivo == "avaliacao_bruta.CSV":
+        if linha.arquivo == "avaliacao_bruta.CSV" and not financeiro:
             for campo in NOTAS:
                 valor = linha.valores.get(campo, "")
                 nota = _decimal(valor)
@@ -200,17 +241,6 @@ def analisar(linhas: list[Linha]) -> dict:
                         linha, "nota_invalida", campo, valor,
                         "A nota deve ser numérica e estar entre 0 e 10.", "erro",
                     )
-        if linha.arquivo == "servicos.CSV":
-            coordenadora = linha.valores.get("Coordenadora", "")
-            if "," in coordenadora or re.search(r"\s+e\s+", coordenadora, re.I):
-                adicionar(
-                    linha, "coordenadora_composta", "Coordenadora", coordenadora,
-                    "O campo aparenta conter mais de uma pessoa.",
-                )
-            equipe = linha.valores.get("Equipe", "")
-            if equipe and not re.search(r"[,.;]|\s+e\s+", equipe, re.I):
-                # Um nome único é válido; listas ambíguas são detectadas abaixo.
-                pass
 
     codigos = defaultdict(lambda: defaultdict(list))
     for linha in linhas:
@@ -251,8 +281,55 @@ def analisar(linhas: list[Linha]) -> dict:
         })
         adicionar(
             primeira, "processo_orfao", _campo_processo(primeira.arquivo),
-            _processo(primeira), "O processo não aparece na agenda.", "erro",
+            _processo(primeira),
+            "O processo não aparece na agenda; as tabelas antigas não eram usadas continuamente.",
+            "aviso",
         )
+
+    solicitacoes = []
+    movimentos_financeiros = []
+    datas_normalizadas = []
+    for linha in linhas:
+        processo = _processo(linha)
+        if linha.arquivo == "agenda.CSV" and not processo:
+            recebido = normalizar_intervalo(linha.valores.get("Recebido em", ""), formato_americano=True)
+            ano = recebido[0].year if recebido else None
+            solicitacoes.append({
+                "arquivo": linha.arquivo,
+                "linha": linha.numero,
+                "cliente": linha.valores.get("Nome do cliente", ""),
+                "origem": linha.valores.get("Origem", ""),
+                "destino": linha.valores.get("Destino", ""),
+                "volume": linha.valores.get("Volume", ""),
+                "data_inicial": _intervalo_texto(normalizar_intervalo(linha.valores.get("Data A inicial", ""), ano)),
+                "data_ofertada": _intervalo_texto(normalizar_intervalo(linha.valores.get("Data A ofertada", ""), ano)),
+                "status": linha.valores.get("Status", ""),
+            })
+        elif linha.arquivo == "avaliacao_bruta.CSV" and not processo:
+            movimentos_financeiros.append({
+                "arquivo": linha.arquivo,
+                "linha": linha.numero,
+                "data": linha.valores.get("Data", ""),
+                "descricao": linha.valores.get("Cliente", ""),
+                "valor": linha.valores.get("$ total", ""),
+                "comentario": linha.valores.get("Comentário", ""),
+            })
+        ano = None
+        if linha.arquivo == "agenda.CSV":
+            recebido = normalizar_intervalo(linha.valores.get("Recebido em", ""), formato_americano=True)
+            ano = recebido[0].year if recebido else None
+        for campo in DATAS[linha.arquivo]:
+            valor = linha.valores.get(campo, "")
+            intervalo = normalizar_intervalo(
+                valor, ano, linha.arquivo == "agenda.CSV" and campo == "Recebido em"
+            ) if valor else None
+            if intervalo:
+                datas_normalizadas.append({
+                    "arquivo": linha.arquivo, "linha": linha.numero,
+                    "processo": processo, "campo": campo, "valor_bruto": valor,
+                    "inicio": intervalo[0].strftime("%d/%m/%Y"),
+                    "fim": intervalo[1].strftime("%d/%m/%Y"),
+                })
 
     dominios = []
     campos = {
@@ -269,6 +346,7 @@ def analisar(linhas: list[Linha]) -> dict:
                         "arquivo": arquivo,
                         "campo": campo,
                         "valor": valor,
+                        "valor_normalizado": primeira_coordenadora(valor) if campo == "Coordenadora" else "",
                         "quantidade": quantidade,
                     })
 
@@ -278,6 +356,9 @@ def analisar(linhas: list[Linha]) -> dict:
         "problemas": problemas,
         "por_linha": dict(por_linha),
         "orfaos": orfaos,
+        "solicitacoes": solicitacoes,
+        "movimentos_financeiros": movimentos_financeiros,
+        "datas_normalizadas": datas_normalizadas,
         "dominios": dominios,
         "totais": {
             "linhas": len(linhas),
@@ -286,8 +367,20 @@ def analisar(linhas: list[Linha]) -> dict:
             "erros": severidades["erro"],
             "avisos": severidades["aviso"],
             "processos_orfaos": len(orfaos),
+            "solicitacoes": len(solicitacoes),
+            "movimentos_financeiros": len(movimentos_financeiros),
         },
     }
+
+
+def _intervalo_texto(intervalo):
+    if not intervalo:
+        return ""
+    return f"{intervalo[0].strftime('%d/%m/%Y')} a {intervalo[1].strftime('%d/%m/%Y')}"
+
+
+def primeira_coordenadora(valor: str) -> str:
+    return re.split(r"\s*(?:,|;|\s+e\s+)\s*", valor, maxsplit=1, flags=re.I)[0].strip()
 
 
 def _campo_processo(arquivo: str) -> str:
@@ -389,11 +482,21 @@ def gerar_relatorio(lote_id: str, destino: Path) -> dict:
         "severidade", "codigo", "arquivo", "linha", "processo",
         "campo", "valor_bruto", "mensagem",
     ))
-    _adicionar_tabela(wb, "Processos_orfaos", diagnostico["orfaos"], (
+    _adicionar_tabela(wb, "Processos_sem_agenda", diagnostico["orfaos"], (
         "processo", "fontes", "cliente_candidato", "tipo_candidato", "ocorrencias",
     ))
     _adicionar_tabela(wb, "Dominios", diagnostico["dominios"], (
-        "arquivo", "campo", "valor", "quantidade",
+        "arquivo", "campo", "valor", "valor_normalizado", "quantidade",
+    ))
+    _adicionar_tabela(wb, "Solicitacoes", diagnostico["solicitacoes"], (
+        "arquivo", "linha", "cliente", "origem", "destino", "volume",
+        "data_inicial", "data_ofertada", "status",
+    ))
+    _adicionar_tabela(wb, "Registros_financeiros", diagnostico["movimentos_financeiros"], (
+        "arquivo", "linha", "data", "descricao", "valor", "comentario",
+    ))
+    _adicionar_tabela(wb, "Datas_normalizadas", diagnostico["datas_normalizadas"], (
+        "arquivo", "linha", "processo", "campo", "valor_bruto", "inicio", "fim",
     ))
 
     for arquivo in ARQUIVOS:
