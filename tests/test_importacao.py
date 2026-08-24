@@ -48,8 +48,10 @@ def test_dry_run_nao_grava_e_identifica_problemas(app, tmp_path):
     with app.app_context():
         resultado = carregar(tmp_path, dry_run=True)
         assert resultado["linhas"] == 4
-        assert resultado["processos_orfaos"] == 1
-        assert resultado["erros"] >= 2
+        assert resultado["linhas_elegiveis"] == 3
+        assert resultado["registros_excluidos"] == 1
+        assert resultado["processos_orfaos"] == 2
+        assert resultado["erros"] == 1
         assert ImportacaoLote.query.count() == 0
         assert ImportacaoRegistro.query.count() == 0
 
@@ -63,6 +65,7 @@ def test_carga_idempotente_e_novo_snapshot(app, tmp_path):
         assert segundo["reutilizado"] is True
         assert ImportacaoLote.query.count() == 1
         assert ImportacaoRegistro.query.count() == 4
+        assert ImportacaoRegistro.query.filter_by(estado="excluido").count() == 1
 
         fontes(tmp_path, cliente="Maria Silva")
         terceiro = carregar(tmp_path)
@@ -83,10 +86,11 @@ def test_relatorio_xlsx_tem_diagnostico_e_dados_brutos(app, tmp_path):
     assert set((
         "Resumo", "Pendencias", "Processos_sem_agenda", "Dominios",
         "Solicitacoes", "Registros_financeiros", "Datas_normalizadas",
+        "Registros_excluidos",
         "Bruto_agenda", "Bruto_servicos", "Bruto_avaliacoes",
     )).issubset(wb.sheetnames)
     assert totais["linhas"] == 4
-    assert wb["Processos_sem_agenda"].max_row == 2
+    assert wb["Processos_sem_agenda"].max_row == 3
 
 
 def test_cli_rejeita_fonte_incompleta(app, tmp_path):

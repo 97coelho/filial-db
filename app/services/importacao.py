@@ -25,6 +25,7 @@ ARQUIVOS = {
     "servicos.CSV": {"Processo", "Cliente", "Serviços", "Status"},
     "avaliacao_bruta.CSV": {"Processo Nº", "Cliente", "Data"},
 }
+REGRAS_VERSAO = "2026-08-24.2"
 
 DATAS = {
     "agenda.CSV": (
@@ -115,6 +116,7 @@ def ler_fontes(diretorio: Path) -> tuple[str, list[Linha]]:
         caminhos.append((nome, caminho))
 
     digest = hashlib.sha256()
+    digest.update(f"regras:{REGRAS_VERSAO}\0".encode())
     linhas = []
     for nome, caminho in caminhos:
         digest.update(nome.encode())
@@ -199,10 +201,39 @@ def analisar(linhas: list[Linha]) -> dict:
         if linha:
             por_linha[(linha.arquivo, linha.numero)].append(codigo)
 
-    def linhas_de(arquivo):
-        return [linha for linha in linhas if linha.arquivo == arquivo]
-
+    excluidos = []
+    chaves_excluidas = set()
     for linha in linhas:
+        recebido = normalizar_intervalo(
+            linha.valores.get("Recebido em", ""), formato_americano=True
+        ) if linha.arquivo == "agenda.CSV" else None
+        ano_referencia = recebido[0].year if recebido else None
+        invalidos = []
+        for campo in DATAS[linha.arquivo]:
+            valor = linha.valores.get(campo, "")
+            americano = linha.arquivo == "agenda.CSV" and campo == "Recebido em"
+            if valor and not normalizar_intervalo(valor, ano_referencia, americano):
+                invalidos.append(f"{campo}: {valor}")
+        if invalidos:
+            chave = (linha.arquivo, linha.numero)
+            chaves_excluidas.add(chave)
+            por_linha[chave].append("data_sem_precisao")
+            excluidos.append({
+                "arquivo": linha.arquivo,
+                "linha": linha.numero,
+                "processo": _processo(linha),
+                "cliente": linha.valores.get("Nome do cliente", linha.valores.get("Cliente", "")),
+                "motivo": " | ".join(invalidos),
+            })
+
+    linhas_ativas = [
+        linha for linha in linhas if (linha.arquivo, linha.numero) not in chaves_excluidas
+    ]
+
+    def linhas_de(arquivo):
+        return [linha for linha in linhas_ativas if linha.arquivo == arquivo]
+
+    for linha in linhas_ativas:
         processo = _processo(linha)
         financeiro = linha.arquivo == "avaliacao_bruta.CSV" and not processo
         if not processo and linha.arquivo == "servicos.CSV":
@@ -210,18 +241,6 @@ def analisar(linhas: list[Linha]) -> dict:
                 linha, "processo_ausente", _campo_processo(linha.arquivo), "",
                 "A linha não possui identificador de processo.", "erro",
             )
-        recebido = normalizar_intervalo(
-            linha.valores.get("Recebido em", ""), formato_americano=True
-        ) if linha.arquivo == "agenda.CSV" else None
-        ano_referencia = recebido[0].year if recebido else None
-        for campo in DATAS[linha.arquivo]:
-            valor = linha.valores.get(campo, "")
-            americano = linha.arquivo == "agenda.CSV" and campo == "Recebido em"
-            if valor and not normalizar_intervalo(valor, ano_referencia, americano):
-                adicionar(
-                    linha, "data_invalida", campo, valor,
-                    "O valor não pôde ser convertido para intervalo em dd/mm/aaaa.", "erro",
-                )
         for (arquivo, campo), permitidos in DOMINIOS.items():
             if linha.arquivo != arquivo:
                 continue
@@ -243,7 +262,7 @@ def analisar(linhas: list[Linha]) -> dict:
                     )
 
     codigos = defaultdict(lambda: defaultdict(list))
-    for linha in linhas:
+    for linha in linhas_ativas:
         bruto = _processo(linha)
         if bruto:
             codigos[normalizar_codigo(bruto)][bruto].append(linha)
@@ -260,7 +279,7 @@ def analisar(linhas: list[Linha]) -> dict:
         for linha in linhas_de("agenda.CSV") if _processo(linha)
     }
     outras = defaultdict(list)
-    for linha in linhas:
+    for linha in linhas_ativas:
         bruto = _processo(linha)
         if linha.arquivo != "agenda.CSV" and bruto:
             outras[normalizar_codigo(bruto)].append(linha)
@@ -289,7 +308,7 @@ def analisar(linhas: list[Linha]) -> dict:
     solicitacoes = []
     movimentos_financeiros = []
     datas_normalizadas = []
-    for linha in linhas:
+    for linha in linhas_ativas:
         processo = _processo(linha)
         if linha.arquivo == "agenda.CSV" and not processo:
             recebido = normalizar_intervalo(linha.valores.get("Recebido em", ""), formato_americano=True)
@@ -359,9 +378,14 @@ def analisar(linhas: list[Linha]) -> dict:
         "solicitacoes": solicitacoes,
         "movimentos_financeiros": movimentos_financeiros,
         "datas_normalizadas": datas_normalizadas,
+        "excluidos": excluidos,
+        "chaves_excluidas": chaves_excluidas,
         "dominios": dominios,
         "totais": {
+            "regras_versao": REGRAS_VERSAO,
             "linhas": len(linhas),
+            "linhas_elegiveis": len(linhas_ativas),
+            "registros_excluidos": len(excluidos),
             "arquivos": dict(totais_arquivo),
             "problemas": len(problemas),
             "erros": severidades["erro"],
@@ -421,7 +445,9 @@ def carregar(diretorio: Path, dry_run: bool = False) -> dict:
     )
     db.session.add(lote)
     for linha in linhas:
-        codigos = diagnostico["por_linha"].get((linha.arquivo, linha.numero), [])
+        chave = (linha.arquivo, linha.numero)
+        codigos = diagnostico["por_linha"].get(chave, [])
+        excluido = chave in diagnostico["chaves_excluidas"]
         db.session.add(ImportacaoRegistro(
             lote=lote.id,
             arquivo=linha.arquivo,
@@ -429,7 +455,7 @@ def carregar(diretorio: Path, dry_run: bool = False) -> dict:
             linha=linha.numero,
             checksum=linha.checksum,
             valor_bruto=linha.bruto,
-            estado="conflito" if codigos else "carregado",
+            estado="excluido" if excluido else ("conflito" if codigos else "carregado"),
             conflito=", ".join(sorted(set(codigos))) or None,
         ))
     try:
@@ -497,6 +523,9 @@ def gerar_relatorio(lote_id: str, destino: Path) -> dict:
     ))
     _adicionar_tabela(wb, "Datas_normalizadas", diagnostico["datas_normalizadas"], (
         "arquivo", "linha", "processo", "campo", "valor_bruto", "inicio", "fim",
+    ))
+    _adicionar_tabela(wb, "Registros_excluidos", diagnostico["excluidos"], (
+        "arquivo", "linha", "processo", "cliente", "motivo",
     ))
 
     for arquivo in ARQUIVOS:

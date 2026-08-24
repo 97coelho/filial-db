@@ -69,3 +69,5 @@ flask --app wsgi:app importar relatorio UUID-DO-LOTE \
 ```
 
 A carga é idempotente: o mesmo conjunto de arquivos reutiliza o lote existente, enquanto qualquer alteração cria um snapshot novo. O relatório local contém os dados brutos e não deve ser enviado ao Git; `data_old/`, `reports/` e bancos SQLite estão ignorados. Esses comandos alimentam somente o staging e nunca publicam registros nas tabelas operacionais.
+
+Linhas com datas sem precisão suficiente para formar um intervalo, como `ASAP`, `TBC` ou `Fim de maio`, são mantidas no staging com estado `excluido`, aparecem na aba `Registros_excluidos` e não ficam elegíveis para publicação.
