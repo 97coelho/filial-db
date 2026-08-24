@@ -281,10 +281,21 @@ class Auditoria(db.Model):
     operacao: Mapped[str] = mapped_column(db.String(20))
 
 
+class ImportacaoLote(db.Model):
+    __tablename__ = "importacao_lotes"
+    id: Mapped[str] = mapped_column(db.String(36), primary_key=True, default=uid)
+    fingerprint: Mapped[str] = mapped_column(db.String(64), unique=True, index=True)
+    origem: Mapped[str] = mapped_column(db.Text)
+    estado: Mapped[str] = mapped_column(db.String(20), default="carregado", index=True)
+    totais: Mapped[dict] = mapped_column(JSON, default=dict)
+    criado_em: Mapped[datetime] = mapped_column(default=now, nullable=False)
+    registros: Mapped[list[ImportacaoRegistro]] = relationship(cascade="all, delete-orphan")
+
+
 class ImportacaoRegistro(db.Model):
     __tablename__ = "importacao_registros"
     id: Mapped[int] = mapped_column(primary_key=True)
-    lote: Mapped[str] = mapped_column(db.String(36), index=True)
+    lote: Mapped[str] = mapped_column(db.ForeignKey("importacao_lotes.id"), index=True)
     arquivo: Mapped[str] = mapped_column(db.Text)
     aba: Mapped[str | None] = mapped_column(db.String(160))
     linha: Mapped[int]
@@ -292,7 +303,7 @@ class ImportacaoRegistro(db.Model):
     valor_bruto: Mapped[dict] = mapped_column(JSON)
     estado: Mapped[str] = mapped_column(db.String(20), default="carregado")
     conflito: Mapped[str | None] = mapped_column(db.Text)
-    __table_args__ = (UniqueConstraint("arquivo", "aba", "linha", "checksum"),)
+    __table_args__ = (UniqueConstraint("lote", "arquivo", "aba", "linha"),)
 
 
 class HistoricoProcesso(db.Model):

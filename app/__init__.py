@@ -28,6 +28,9 @@ def create_app(config_object=Config):
     app.register_blueprint(api, url_prefix="/api/v1")
     app.register_blueprint(web)
 
+    from .cli.importacao import importar
+    app.cli.add_command(importar)
+
     @app.cli.command("seed")
     def seed():
         from .seed import seed_database

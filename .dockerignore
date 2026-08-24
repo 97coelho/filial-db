@@ -6,6 +6,7 @@ __pycache__
 .coverage
 .env
 backups
+reports
 *.db
 *.sqlite
 *.sqlite3

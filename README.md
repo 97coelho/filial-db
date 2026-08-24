@@ -49,3 +49,17 @@ Agende o primeiro comando diariamente no sistema operacional. A rotina mantém a
 ## Migração de dados
 
 Importações devem passar por `importacao_registros` antes da publicação. Cada linha conserva arquivo, aba, linha, checksum e JSON bruto. O conteúdo operacional anterior não é importado automaticamente e permanece intacto até a matriz de mapeamento ser revisada.
+
+Para criar o primeiro diagnóstico sem tocar no banco persistente, use um SQLite descartável. Os CSVs esperados são `agenda.CSV`, `servicos.CSV` e `avaliacao_bruta.CSV`, separados por `;` e codificados em Latin-1.
+
+```bash
+export DATABASE_URL=sqlite:////tmp/filial-bsb-importacao.sqlite3
+flask --app wsgi:app db upgrade
+flask --app wsgi:app seed
+flask --app wsgi:app importar carregar data_old --dry-run
+flask --app wsgi:app importar carregar data_old
+flask --app wsgi:app importar relatorio UUID-DO-LOTE \
+  --saida reports/diagnostico-migracao.xlsx
+```
+
+A carga é idempotente: o mesmo conjunto de arquivos reutiliza o lote existente, enquanto qualquer alteração cria um snapshot novo. O relatório local contém os dados brutos e não deve ser enviado ao Git; `data_old/`, `reports/` e bancos SQLite estão ignorados. Esses comandos alimentam somente o staging e nunca publicam registros nas tabelas operacionais.
